@@ -1,6 +1,8 @@
 #include "sdc.h"
 
+#include <dirent.h>
 #include <string.h>
+#include <stdbool.h>
 #include "driver/sdmmc_host.h"
 #include "driver/sdspi_host.h"
 #include "esp_vfs_fat.h"
@@ -14,6 +16,35 @@
 static const char *TAG = "sdc.c";
 
 #define MOUNT_POINT "/sdcard"
+
+uint8_t buffer[2][512];
+bool buffer_full[2] = {false, false};
+uint8_t write_buffer = 0;
+uint8_t read_buffer = 0;
+int read_index = 0;
+
+
+uint8_t fifo_read() {
+    if (buffer_full[read_buffer]) {
+        uint8_t data = buffer[read_buffer][read_index++];
+        if (read_index >= 512) {
+            read_buffer ^= 1;
+            read_index = 0;
+        }
+        return data;
+    }
+    ESP_LOGI(TAG, "Missed fifo_read.");
+    return 0;
+}
+
+bool buffer_avail() {
+    return buffer_full[read_buffer];
+}
+
+uint8_t * get_buffer() {
+    buffer_full[read_buffer] = false;
+    return buffer[read_buffer];
+}
 
 void sdc_init() {
     esp_err_t ret;
@@ -74,6 +105,94 @@ void sdc_init() {
     ESP_LOGI("FILE", "Filesystem mounted");
 
     sdmmc_card_print_info(stdout, card);
+
+    char **songs = malloc(10 * sizeof(char *));
+
+    DIR *dp;
+    struct dirent *ep;
+    dp = opendir("/sdcard");
+
+    if (dp != NULL)
+    {
+        int counter = 0;
+        while ((ep = readdir (dp)) != NULL) {
+            ESP_LOGI(TAG, "%s\n", ep->d_name);
+            songs[counter] = malloc(sizeof(strlen(ep->d_name) + 1));
+            strcpy(songs[counter], ep->d_name);
+            counter++;
+        }
+            
+        songs[counter] = NULL;
+            
+        (void) closedir (dp);
+        // return 0;
+    }
+
+    int index = 0;
+    while (songs[index] != NULL)
+    {
+        ESP_LOGI(TAG, "index at %d = ", index);
+        ESP_LOGI(TAG, "%s\n", songs[index]);
+        index++;
+    }
+    
+    char path[256] = "/sdcard/8bit.wav";
+    // strcat(path, songs[1]);
+    FILE *fp = fopen(path, "r");
+    if (fp == NULL) {
+        ESP_LOGE(TAG, "Failed to open %s for reading", path);
+        return;
+    }
+
+    struct HEADER header;
+    fread(&header, sizeof(header), 1, fp);
+    printf("%s\n", header.riff);
+    printf("%d\n", header.fmt_type);
+    printf("%ld\n", header.sample_rate);
+    printf("%d\n", header.bits_per_sample);
+    fflush(stdout);
+
+    // return;
+
+    while (1) {
+        if (!buffer_full[0]) {
+            uint8_t retry = 3;
+            while (retry > 0) {
+                if (fread(buffer[0], 1, sizeof(buffer[0]), fp) == 512) {
+                    buffer_full[0] = true;
+                    break;
+                }
+                retry--;
+                ESP_LOGE(TAG, "Failed to read file into buffer0.");
+            }
+        }
+        if (!buffer_full[1]) {
+            uint8_t retry = 3;
+            while (retry > 0) {
+                if (fread(buffer[1], 1, sizeof(buffer[1]), fp) == 512) {
+                    buffer_full[1] = true;
+                    break;
+                }
+                retry--;
+                ESP_LOGE(TAG, "Failed to read file into buffer1.");
+            }
+        }
+        vTaskDelay(10 / portTICK_PERIOD_MS);
+    }
+
+    unsigned long count = 0;
+    uint8_t buffer[512];
+    while (fread(buffer, 1, sizeof(buffer), fp) == 512)
+    {
+        count += 512;
+        continue;
+        for (int i = 0; i < 512; i++) {
+            ESP_LOGI(TAG, "%x\n", buffer[i]);
+        }
+    }
+
+    ESP_LOGI(TAG, "total %ld\n", count);
+    fclose(fp);
 }
 
 esp_err_t read_file(const char *path) {
