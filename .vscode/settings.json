@@ -3,6 +3,7 @@
         "dac.h": "c",
         "sdmmc_host.h": "c",
         "typeinfo": "c",
-        "stat.h": "c"
+        "stat.h": "c",
+        "i2s.h": "c"
     }
 }

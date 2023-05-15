@@ -8,6 +8,7 @@
 #include "esp_vfs_fat.h"
 #include "sdmmc_cmd.h"
 #include "driver/i2s.h"
+// #include "driver/i2s_std.h"
 
 #define PIN_NUM_MISO    GPIO_NUM_19
 #define PIN_NUM_MOSI    GPIO_NUM_23
@@ -106,35 +107,35 @@ void sdc_close() {
 }
 
 void task_read_song() {
-    char **songs = malloc(10 * sizeof(char *));
+    // char **songs = malloc(10 * sizeof(char *));
 
     DIR *dp;
     struct dirent *ep;
     dp = opendir("/sdcard");
 
-    if (dp != NULL)
-    {
-        int counter = 0;
-        while ((ep = readdir (dp)) != NULL) {
-            songs[counter] = malloc(sizeof(strlen(ep->d_name) + 1));
-            strcpy(songs[counter], ep->d_name);
-            counter++;
-        }
+    // if (dp != NULL)
+    // {
+    //     int counter = 0;
+    //     while ((ep = readdir (dp)) != NULL) {
+    //         songs[counter] = malloc(sizeof(strlen(ep->d_name) + 1));
+    //         strcpy(songs[counter], ep->d_name);
+    //         counter++;
+    //     }
             
-        songs[counter] = NULL;
+    //     songs[counter] = NULL;
             
-        (void) closedir (dp);
-        // return 0;
-    }
+    //     (void) closedir (dp);
+    //     // return 0;
+    // }
 
-    int index = 0;
-    while (songs[index] != NULL)
-    {
-        ESP_LOGI(TAG, "index at %d = %s\n", index, songs[index]);
-        index++;
-    }
+    // int index = 0;
+    // while (songs[index] != NULL)
+    // {
+    //     ESP_LOGI(TAG, "index at %d = %s\n", index, songs[index]);
+    //     index++;
+    // }
     
-    char path[256] = "/sdcard/tpg8b8k.wav";
+    char path[256] = "/sdcard/tpg8b22k.wav";
     // strcat(path, songs[1]);
     FILE *fp = fopen(path, "r");
     if (fp == NULL) {
@@ -151,10 +152,10 @@ void task_read_song() {
     fflush(stdout);
 
     // i2s_event_queue = xQueueCreate(10, sizeof(i2s_event_t));
-    task_i2s_output(header.sample_rate);
+    task_i2s_output(header.sample_rate / 4);
 
     unsigned long count = 0;
-    uint8_t buffer[512];
+    uint8_t buffer[1024];
     bool buffer_full = false;
     while (true)
     {
@@ -162,20 +163,20 @@ void task_read_song() {
         if (!buffer_full) {
             size_t bytes_read = fread(buffer, 1, sizeof(buffer), fp);
             buffer_full = true;
-            if (bytes_read < 512) break;
+            if (bytes_read < 1024) break;
         }
 
-        if (xQueueReceive(i2s_event_queue, &event, portMAX_DELAY) == pdTRUE) {
+        if (xQueueReceive(i2s_event_queue, &event, portMAX_DELAY) == pdPASS) {
             if (event.type == I2S_EVENT_TX_DONE) {
                 size_t bytesOut;
-                i2s_write(I2S_NUM_0, buffer, 512, &bytesOut, portMAX_DELAY);
+                i2s_write(I2S_NUM_0, buffer, sizeof(buffer), &bytesOut, portMAX_DELAY);
                 buffer_full = false;
                 // ESP_LOGI(TAG, "read %d bytes, wrote %d bytes.\n", bytes_read, bytesOut);
-                count += 512;
+                count += 1024;
             }
         }
-        vTaskDelay(5 / portTICK_PERIOD_MS);
     }
+    i2s_driver_uninstall(I2S_NUM_0);
 
     ESP_LOGI(TAG, "%ld bytes out of %ld read.\n", count, header.size);
     fclose(fp);
@@ -187,16 +188,20 @@ void task_i2s_output(uint32_t sample_rate) {
         .mode = I2S_MODE_MASTER | I2S_MODE_TX | I2S_MODE_DAC_BUILT_IN,
         .sample_rate = sample_rate,
         .bits_per_sample = 8,
-        .communication_format = I2S_COMM_FORMAT_I2S_MSB,
-        .channel_format = I2S_CHANNEL_FMT_RIGHT_LEFT,
+        .communication_format = I2S_COMM_FORMAT_STAND_I2S,
+        // .channel_format = I2S_CHANNEL_FMT_RIGHT_LEFT,
+        .channel_format = I2S_CHANNEL_MONO,
         .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1,
         .dma_buf_count = 8,
-        .dma_buf_len = 64,
+        .dma_buf_len = 128,
         .use_apll = true,
     };
 
+    ESP_LOGI(TAG, "i2s sample rate = %ld\n", i2s_config.sample_rate);
+
     ESP_ERROR_CHECK(i2s_driver_install(I2S_NUM_0, &i2s_config, 4, &i2s_event_queue));
     ESP_ERROR_CHECK(i2s_set_pin(I2S_NUM_0, NULL));
-    ESP_ERROR_CHECK(i2s_set_dac_mode(I2S_DAC_CHANNEL_BOTH_EN));
+    // ESP_ERROR_CHECK(i2s_set_dac_mode(I2S_DAC_CHANNEL_BOTH_EN));
+    i2s_set_dac_mode(I2S_DAC_CHANNEL_RIGHT_EN);
     i2s_zero_dma_buffer(I2S_NUM_0);
 }
