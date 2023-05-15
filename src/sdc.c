@@ -7,6 +7,7 @@
 #include "driver/sdspi_host.h"
 #include "esp_vfs_fat.h"
 #include "sdmmc_cmd.h"
+#include "driver/i2s.h"
 
 #define PIN_NUM_MISO    GPIO_NUM_19
 #define PIN_NUM_MOSI    GPIO_NUM_23
@@ -17,25 +18,28 @@ static const char *TAG = "sdc.c";
 
 #define MOUNT_POINT "/sdcard"
 
-uint8_t buffer[2][512];
-bool buffer_full[2] = {false, false};
+// uint8_t buffer[2][512];
+// uint8_t buffer[512];
+// bool buffer_full[2] = {false, false};
 uint8_t write_buffer = 0;
 uint8_t read_buffer = 0;
 int read_index = 0;
 
+QueueHandle_t i2s_event_queue;
 
-uint8_t fifo_read() {
-    if (buffer_full[read_buffer]) {
-        uint8_t data = buffer[read_buffer][read_index++];
-        if (read_index >= 512) {
-            read_buffer ^= 1;
-            read_index = 0;
-        }
-        return data;
-    }
-    ESP_LOGI(TAG, "Missed fifo_read.");
-    return 0;
-}
+
+// uint8_t fifo_read() {
+//     if (buffer_full[read_buffer]) {
+//         uint8_t data = buffer[read_buffer][read_index++];
+//         if (read_index >= 512) {
+//             read_buffer ^= 1;
+//             read_index = 0;
+//         }
+//         return data;
+//     }
+//     ESP_LOGI(TAG, "Missed fifo_read.");
+//     return 0;
+// }
 
 sdmmc_card_t *card;
 const char mount_point[] = MOUNT_POINT;
@@ -130,7 +134,7 @@ void task_read_song() {
         index++;
     }
     
-    char path[256] = "/sdcard/8bit.wav";
+    char path[256] = "/sdcard/tpg8b8k.wav";
     // strcat(path, songs[1]);
     FILE *fp = fopen(path, "r");
     if (fp == NULL) {
@@ -146,56 +150,53 @@ void task_read_song() {
     printf("%d\n", header.bits_per_sample);
     fflush(stdout);
 
-    // return;
-
-    // while (1) {
-    //     if (!buffer_full[0]) {
-    //         uint8_t retry = 3;
-    //         while (retry > 0) {
-    //             size_t bytes_read = fread(buffer[0], 1, sizeof(buffer[0]), fp);
-    //             if (bytes_read == 512) {
-    //                 buffer_full[0] = true;
-    //                 printf("%d\n", buffer[0][0]);
-    //                 break;
-    //             } else if (bytes_read < 512) {
-    //                 ESP_LOGI(TAG, "Finished File.");
-    //                 // return;
-    //             }
-    //             retry--;
-    //             ESP_LOGE(TAG, "Failed to read file into buffer0.");
-    //         }
-    //     }
-    //     if (!buffer_full[1]) {
-    //         uint8_t retry = 3;
-    //         while (retry > 0) {
-    //             size_t bytes_read = fread(buffer[1], 1, sizeof(buffer[1]), fp);
-    //             if (bytes_read == 512) {
-    //                 buffer_full[1] = true;
-    //                 printf("%d\n", buffer[1][0]);
-    //                 break;
-    //             } else if (bytes_read < 512) {
-    //                 ESP_LOGI(TAG, "Finished File.");
-    //                 // return;
-    //             }
-    //             retry--;
-    //             ESP_LOGE(TAG, "Failed to read file into buffer1.");
-    //         }
-    //     }
-    //     vTaskDelay(10 / portTICK_PERIOD_MS);
-    // }
+    // i2s_event_queue = xQueueCreate(10, sizeof(i2s_event_t));
+    task_i2s_output(header.sample_rate);
 
     unsigned long count = 0;
     uint8_t buffer[512];
-    while (fread(buffer, 1, sizeof(buffer), fp) == 512)
+    bool buffer_full = false;
+    while (true)
     {
-        count += 512;
-        // for (int i = 0; i < 512; i++) {
-        //     ESP_LOGI(TAG, "%x\n", buffer[i]);
-        // }
+        i2s_event_t event;
+        if (!buffer_full) {
+            size_t bytes_read = fread(buffer, 1, sizeof(buffer), fp);
+            buffer_full = true;
+            if (bytes_read < 512) break;
+        }
+
+        if (xQueueReceive(i2s_event_queue, &event, portMAX_DELAY) == pdTRUE) {
+            if (event.type == I2S_EVENT_TX_DONE) {
+                size_t bytesOut;
+                i2s_write(I2S_NUM_0, buffer, 512, &bytesOut, portMAX_DELAY);
+                buffer_full = false;
+                // ESP_LOGI(TAG, "read %d bytes, wrote %d bytes.\n", bytes_read, bytesOut);
+                count += 512;
+            }
+        }
+        vTaskDelay(5 / portTICK_PERIOD_MS);
     }
 
-    // printf("%ld bytes out of %d read.\n", count, header.size);
     ESP_LOGI(TAG, "%ld bytes out of %ld read.\n", count, header.size);
     fclose(fp);
     vTaskDelete(NULL);
+}
+
+void task_i2s_output(uint32_t sample_rate) {
+    i2s_config_t i2s_config = {
+        .mode = I2S_MODE_MASTER | I2S_MODE_TX | I2S_MODE_DAC_BUILT_IN,
+        .sample_rate = sample_rate,
+        .bits_per_sample = 8,
+        .communication_format = I2S_COMM_FORMAT_I2S_MSB,
+        .channel_format = I2S_CHANNEL_FMT_RIGHT_LEFT,
+        .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1,
+        .dma_buf_count = 8,
+        .dma_buf_len = 64,
+        .use_apll = true,
+    };
+
+    ESP_ERROR_CHECK(i2s_driver_install(I2S_NUM_0, &i2s_config, 4, &i2s_event_queue));
+    ESP_ERROR_CHECK(i2s_set_pin(I2S_NUM_0, NULL));
+    ESP_ERROR_CHECK(i2s_set_dac_mode(I2S_DAC_CHANNEL_BOTH_EN));
+    i2s_zero_dma_buffer(I2S_NUM_0);
 }

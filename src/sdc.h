@@ -29,4 +29,6 @@ void sdc_close();
 
 void task_read_song();
 
+void task_i2s_output();
+
 #endif

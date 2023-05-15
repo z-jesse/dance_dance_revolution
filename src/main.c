@@ -17,21 +17,7 @@ TaskHandle_t song_handle = NULL;
 
 void blink_led() {
 
-    i2s_config_t i2s_config = {
-        .mode = I2S_MODE_MASTER | I2S_MODE_TX | I2S_MODE_DAC_BUILT_IN,
-        .sample_rate = 8000,
-        .bits_per_sample = 8,
-        .communication_format = I2S_COMM_FORMAT_STAND_MSB,
-        .channel_format = I2S_CHANNEL_FMT_RIGHT_LEFT,
-        .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1,
-        .dma_buf_count = 8,
-        .dma_buf_len = 64,
-        .use_apll = true,
-    };
-
-    ESP_ERROR_CHECK(i2s_driver_install(I2S_NUM_0, &i2s_config, 0, NULL));
-    ESP_ERROR_CHECK(i2s_set_pin(I2S_NUM_0, NULL));
-    ESP_ERROR_CHECK(i2s_set_dac_mode(I2S_DAC_CHANNEL_BOTH_EN));
+    
 
     // dac_output_enable(DAC_CHANNEL_1);
 
