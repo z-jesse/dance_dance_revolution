@@ -23,12 +23,10 @@ struct HEADER
 
 uint8_t fifo_read();
 
-bool buffer_avail();
+esp_err_t sdc_init();
 
-uint8_t * get_buffer();
+void sdc_close();
 
-void sdc_init();
-
-esp_err_t read_file(const char *path);
+void task_read_song();
 
 #endif
